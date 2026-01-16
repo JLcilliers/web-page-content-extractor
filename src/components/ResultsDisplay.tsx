@@ -41,7 +41,22 @@ export default function ResultsDisplay({ data }: ResultsDisplayProps) {
         </h2>
 
         {data.headings.length === 0 ? (
-          <p className="text-gray-400 italic">No headings found</p>
+          data.fallbackContent ? (
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                <p className="text-amber-800 text-sm">
+                  <strong>Note:</strong> No semantic headings (H1-H4) found. Showing extracted content using fallback method: <code className="bg-amber-100 px-1 rounded">{data.fallbackContent.source}</code>
+                </p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded border">
+                <pre className="text-gray-700 text-sm whitespace-pre-wrap font-sans">
+                  {data.fallbackContent.text}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-400 italic">No content found</p>
+          )
         ) : (
           <div className="space-y-4">
             {data.headings.map((heading, index) => (
@@ -69,9 +84,9 @@ export default function ResultsDisplay({ data }: ResultsDisplayProps) {
                 {heading.content.length > 0 && (
                   <div className="ml-8 space-y-2">
                     {heading.content.map((paragraph, pIndex) => (
-                      <p key={pIndex} className="text-gray-600 text-sm bg-gray-50 p-2 rounded">
-                        {paragraph.length > 300 ? `${paragraph.substring(0, 300)}...` : paragraph}
-                      </p>
+                      <div key={pIndex} className="text-gray-600 text-sm bg-gray-50 p-2 rounded">
+                        {renderContent(paragraph)}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -89,6 +104,24 @@ export default function ResultsDisplay({ data }: ResultsDisplayProps) {
       </div>
     </div>
   );
+}
+
+function renderContent(content: string): React.ReactNode {
+  // Check if content contains list items (bullets or numbers)
+  if (content.includes('\n') && (content.includes('•') || /^\d+\./m.test(content))) {
+    return (
+      <pre className="whitespace-pre-wrap font-sans text-gray-600">
+        {content}
+      </pre>
+    );
+  }
+
+  // Truncate long paragraphs
+  if (content.length > 500) {
+    return content.substring(0, 500) + '...';
+  }
+
+  return content;
 }
 
 function getHeadingColor(level: number): string {
