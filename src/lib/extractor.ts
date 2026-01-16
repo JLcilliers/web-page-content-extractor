@@ -40,9 +40,9 @@ const NOISE_SELECTORS = [
   '.breadcrumb', '.breadcrumbs', '.pagination', '.pager',
   '.comments', '.comment-section', '.related-posts', '.recommended',
 
-  // Class pattern matchers (handled separately)
-  '[class*="cookie"]', '[class*="popup"]', '[class*="modal"]', '[class*="banner"]',
-  '[class*="newsletter"]', '[class*="subscribe"]', '[class*="promo"]',
+  // Class pattern matchers (handled separately) - be conservative to avoid removing content
+  '[class*="cookie"]', '[class*="popup"]', '[class*="modal"]',
+  '[class*="newsletter"]', '[class*="subscribe"]',
 
   // Wikipedia-specific noise
   '.mw-editsection', '.noprint', '.navbox', '.navbox-styles', '.infobox',
@@ -72,6 +72,18 @@ const CONTENT_CONTAINER_SELECTORS = [
   '.article-content',
   '.page-content',
   '.main-content',
+  // WordPress-specific containers
+  '.wpb_wrapper',
+  '.wpb_text_column',
+  '.wp-block-group',
+  '.wp-block-column',
+  '.elementor-widget-container',
+  '.vc_column-inner',
+  // Generic content wrappers
+  '.wrapper',
+  '.container',
+  '.site-content',
+  '.page-wrapper',
 ];
 
 // ============================================================================
@@ -162,21 +174,48 @@ function removeNoiseElements($: CheerioAPI): void {
   });
 
   // Remove elements with specific patterns in class names
+  // Be more conservative - only remove if class strongly indicates non-content
   $('[class]').each((_: number, el: any) => {
     const className = $(el).attr('class') || '';
     const lowerClass = className.toLowerCase();
+    const tagName = ($(el).prop('tagName') || '').toLowerCase();
 
-    // Remove elements with these patterns in class names
-    const noisePatterns = [
-      'footer', 'nav', 'menu', 'sidebar', 'widget', 'advertisement',
-      'social', 'share', 'comment', 'related', 'recommended', 'promo',
+    // Skip if element contains headings (likely main content)
+    if ($(el).find('h1, h2, h3, h4').length > 0) return;
+
+    // Skip article-like elements even with noisy class names
+    if (['article', 'main', 'section'].includes(tagName)) return;
+
+    // Only remove elements with these clear noise patterns
+    const clearNoisePatterns = [
+      'footer-widget', 'nav-menu', 'sidebar-widget', 'ad-container',
+      'social-share', 'share-buttons', 'comment-form', 'related-posts',
+      'newsletter-signup', 'cookie-notice', 'gdpr-banner'
+    ];
+
+    // More aggressive patterns, but only for small elements
+    const aggressivePatterns = [
+      'footer', 'sidebar', 'widget', 'advertisement',
+      'social', 'share', 'comment', 'related', 'recommended',
       'newsletter', 'subscribe', 'cookie', 'gdpr', 'consent'
     ];
 
-    for (const pattern of noisePatterns) {
-      if (lowerClass.includes(pattern) && !lowerClass.includes('content')) {
+    // Check clear noise patterns
+    for (const pattern of clearNoisePatterns) {
+      if (lowerClass.includes(pattern)) {
         $(el).remove();
-        break;
+        return;
+      }
+    }
+
+    // Check aggressive patterns only for smaller elements
+    const textLength = $(el).text().replace(/\s+/g, '').length;
+    if (textLength < 500) {
+      for (const pattern of aggressivePatterns) {
+        if (lowerClass.includes(pattern) && !lowerClass.includes('content') && !lowerClass.includes('main')) {
+          $(el).remove();
+          return;
+        }
       }
     }
   });
@@ -330,6 +369,21 @@ function findHighestTextDensityElement($: CheerioAPI): CheerioElement {
 // ============================================================================
 
 function extractHeadingsWithContent($: CheerioAPI, $container: CheerioElement): HeadingWithContent[] {
+  // Try container first, then fallback to entire body
+  let headings = extractHeadingsFromElement($, $container);
+
+  // If no headings found in container, try the entire body
+  if (headings.length === 0) {
+    const $body = $('body');
+    if ($body.length > 0 && $body !== $container) {
+      headings = extractHeadingsFromElement($, $body as CheerioElement);
+    }
+  }
+
+  return headings;
+}
+
+function extractHeadingsFromElement($: CheerioAPI, $container: CheerioElement): HeadingWithContent[] {
   const headings: HeadingWithContent[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const headingElements: { element: any; level: number; text: string }[] = [];
