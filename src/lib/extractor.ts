@@ -111,16 +111,24 @@ export async function extractSEOContent(url: string): Promise<ExtractedContent> 
   const metaTitle = extractMetaTitle($);
   const metaDescription = extractMetaDescription($);
 
-  // Step 2: Remove noise elements
+  // Step 2: CRITICAL - Extract H1 BEFORE noise removal
+  // H1 is always the primary page heading and must never be filtered out
+  // It may be in hero sections, headers, or banners that would otherwise be removed
+  const preExtractedH1 = extractH1BeforeNoiseRemoval($);
+
+  // Step 3: Remove noise elements
   removeNoiseElements($);
 
-  // Step 3: Find the main content container
+  // Step 4: Find the main content container
   const $contentContainer = findContentContainer($);
 
-  // Step 4: Extract headings with content
-  const headings = extractHeadingsWithContent($, $contentContainer);
+  // Step 5: Extract headings with content (H2-H4 primarily, may also find H1 in main content)
+  let headings = extractHeadingsWithContent($, $contentContainer);
 
-  // Step 5: If no headings found, use fallback extraction
+  // Step 6: Merge pre-extracted H1 if it wasn't already found
+  headings = mergePreExtractedH1(headings, preExtractedH1);
+
+  // Step 7: If no headings found, use fallback extraction
   let fallbackContent: FallbackContent | undefined;
   if (headings.length === 0) {
     fallbackContent = extractFallbackContent($, $contentContainer);
@@ -134,6 +142,113 @@ export async function extractSEOContent(url: string): Promise<ExtractedContent> 
     fallbackContent,
     extractedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Extract H1 BEFORE any noise removal.
+ * H1 is always the primary page heading and should never be filtered out,
+ * even if it's in a hero section, header, or banner.
+ */
+function extractH1BeforeNoiseRemoval($: CheerioAPI): HeadingWithContent | null {
+  const $h1 = $('h1').first();
+
+  if ($h1.length === 0) return null;
+
+  const text = cleanText($h1.text());
+  if (!text || text.length === 0 || isNoiseHeading(text)) return null;
+
+  // Try to extract content after the H1 (intro paragraph, etc.)
+  const content: string[] = [];
+  const seenTexts = new Set<string>();
+
+  // Check for intro content - look at siblings and nearby elements
+  let $current = $h1.next();
+  let foundContentCount = 0;
+  const maxIntroElements = 3; // Limit to avoid pulling in too much
+
+  while ($current.length > 0 && foundContentCount < maxIntroElements) {
+    const tagName = ($current.prop('tagName') || '').toLowerCase();
+
+    // Stop if we hit another heading
+    if (/^h[1-6]$/.test(tagName)) break;
+
+    // Extract paragraph content
+    if (tagName === 'p') {
+      const text = cleanText($current.text());
+      if (text && text.length > 20 && !seenTexts.has(text)) {
+        seenTexts.add(text);
+        content.push(text);
+        foundContentCount++;
+      }
+    }
+
+    // Also check for spans with date/author info that might be intro
+    if (tagName === 'span' || tagName === 'div') {
+      const text = cleanText($current.text());
+      // Skip very short text (likely metadata like dates)
+      if (text && text.length > 50 && !seenTexts.has(text)) {
+        seenTexts.add(text);
+        content.push(text);
+        foundContentCount++;
+      }
+    }
+
+    $current = $current.next();
+  }
+
+  // Also check parent's siblings (H1 might be wrapped in a div)
+  if (content.length === 0) {
+    const $parent = $h1.parent();
+    $current = $parent.next();
+    foundContentCount = 0;
+
+    while ($current.length > 0 && foundContentCount < maxIntroElements) {
+      const tagName = ($current.prop('tagName') || '').toLowerCase();
+      if (/^h[1-6]$/.test(tagName)) break;
+
+      if (tagName === 'p' || tagName === 'div') {
+        const text = cleanText($current.text());
+        if (text && text.length > 30 && !seenTexts.has(text)) {
+          seenTexts.add(text);
+          content.push(text);
+          foundContentCount++;
+        }
+      }
+
+      $current = $current.next();
+    }
+  }
+
+  return {
+    level: 1,
+    text,
+    content,
+  };
+}
+
+/**
+ * Merge pre-extracted H1 with other headings if not already present
+ */
+function mergePreExtractedH1(
+  headings: HeadingWithContent[],
+  preExtractedH1: HeadingWithContent | null
+): HeadingWithContent[] {
+  if (!preExtractedH1) return headings;
+
+  // Check if H1 already exists in headings
+  const existingH1 = headings.find(h => h.level === 1);
+
+  if (existingH1) {
+    // H1 already found, check if it's the same
+    if (existingH1.text === preExtractedH1.text) {
+      return headings; // Same H1, no need to add
+    }
+    // Different H1 text - this is unusual, keep the pre-extracted one at the start
+    // as it's likely the true page title
+  }
+
+  // Add H1 at the beginning
+  return [preExtractedH1, ...headings.filter(h => h.level !== 1 || h.text !== preExtractedH1.text)];
 }
 
 // ============================================================================
